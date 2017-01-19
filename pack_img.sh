@@ -693,8 +693,13 @@ function do_pack_tina()
 	#ln -s ${ROOT_DIR}/vmlinux.tar.bz2 vmlinux.fex
 	ln -s ${ROOT_DIR}/boot.img        boot.fex
 	ln -s ${ROOT_DIR}/rootfs.img     rootfs.fex
-
-	# Those files is ready for SPINor.
+	if [ -f ${ROOT_DIR}/boot_initramfs.img ]; then
+        ln -s ${ROOT_DIR}/boot_initramfs.img recovery.fex
+    else
+        touch recovery.fex
+        echo "recovery part not used!" > recovery.fex
+    fi
+    # Those files is ready for SPINor.
 	#ln -s ${ROOT_DIR}/uImage          kernel.fex
 	#ln -s ${ROOT_DIR}/rootfs.squashfs rootfs_squashfs.fex
 
