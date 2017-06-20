@@ -88,8 +88,17 @@ elif [ "x${PACK_CHIP}" = "xsun8iw5p1" ]; then
 elif [ "x${PACK_CHIP}" = "xsun8iw6p1" ]; then
 	PACK_BOARD_PLATFORM=octopus
 	ARCH=arm
+elif [ "x${PACK_CHIP}" = "xsun8iw8p1" ]; then
+	PACK_BOARD_PLATFORM=banjo
+	ARCH=arm
 elif [ "x${PACK_CHIP}" = "xsun8iw11p1" ]; then
 	PACK_BOARD_PLATFORM=azalea
+	ARCH=arm
+elif [ "x${PACK_CHIP}" = "xsun8iw10p1" ]; then
+	PACK_BOARD_PLATFORM=cello
+	ARCH=arm
+elif [ "x${PACK_CHIP}" = "xsun3iw1p1" ]; then
+	PACK_BOARD_PLATFORM=sitar
 	ARCH=arm
 elif [ "x${PACK_CHIP}" = "xsun50iw1p1" ]; then
 	PACK_BOARD_PLATFORM=tulip
@@ -161,9 +170,9 @@ ${PACK_BOARD_PLATFORM}-common/bin/sboot_${PACK_CHIP}-${OTA_TEST_NAME}.bin:image/
 )
 
 a64_boot_file_secure=(
-${PACK_BOARD_PLATFORM}/bin/optee_${PACK_CHIP}.bin:image/optee.fex
-${PACK_BOARD_PLATFORM}/bin/sboot_${PACK_CHIP}.bin:image/sboot.bin
-${PACK_BOARD_PLATFORM}/bin/sboot_${PACK_CHIP}-${OTA_TEST_NAME}.bin:image/sboot-${OTA_TEST_NAME}.bin
+${PACK_BOARD_PLATFORM}-common/bin/optee_${PACK_CHIP}.bin:image/optee.fex
+${PACK_BOARD_PLATFORM}-common/bin/sboot_${PACK_CHIP}.bin:image/sboot.bin
+${PACK_BOARD_PLATFORM}-common/bin/sboot_${PACK_CHIP}-${OTA_TEST_NAME}.bin:image/sboot-${OTA_TEST_NAME}.bin
 )
 
 function show_boards()
@@ -279,10 +288,10 @@ function do_prepare()
 		show_boards
 		exit 1
 	fi
-
+	#TODO:diff kernel version support
 	if [ -z "${PACK_KERN}" ] ; then
 		printf "No kernel param, parse it from ${PACK_BOARD_PLATFORM}\n"
-		if [ "x${PACK_BOARD_PLATFORM}" = "xtulip" -o "x${PACK_BOARD_PLATFORM}" = "xazalea" ]; then
+		if [ "x${PACK_BOARD_PLATFORM}" = "xtulip" -o "x${PACK_BOARD_PLATFORM}" = "xazalea" -o "x${PACK_BOARD_PLATFORM}" = "xsitar" -o "x${PACK_BOARD_PLATFORM}" = "xcello" ]; then
 			PACK_KERN="linux-3.10"
 			ENV_SUFFIX=3.10
 		else
@@ -309,8 +318,7 @@ function do_prepare()
 		cp -f ${PACK_TOPDIR}/target/allwinner/$file ${ROOT_DIR}/image/ 2> /dev/null
 	done
 	# amend env copy
-	rm ${ROOT_DIR}/image/env-3*.cfg 2> /dev/null
-	cp -f ${PACK_TOPDIR}/target/allwinner/generic/configs/env-${ENV_SUFFIX}.cfg ${ROOT_DIR}/image/env.cfg 2> /dev/null
+	mv ${ROOT_DIR}/image/env-${ENV_SUFFIX}.cfg ${ROOT_DIR}/image/env.cfg 2> /dev/null
 	# If platform config files exist, we will cover the default files
 	# For example, mv out/image_linux.cfg out/image.cfg
 	cd ${ROOT_DIR}
@@ -409,18 +417,21 @@ function do_prepare()
 
 	echo "imagename = $IMG_NAME" >> ${ROOT_DIR}/image/image.cfg
 	echo "" >> ${ROOT_DIR}/image/image.cfg
+	if [ "x${PACK_PLATFORM}" = "xdragonboard" ] ; then
+		sed -i '/\[nand0_para\]/a\nand0_dragonboard = 1' ${ROOT_DIR}/image/sys_config.fex
+	fi
 }
 
 function do_ini_to_dts()
 {
-	if [ "x${PACK_KERN}" != "xlinux-3.10" ] ; then
+	if [ "x${PACK_KERN}" != "xlinux-3.10" -a "x${PACK_KERN}" != "xlinux-4.4" ] ; then
 		return
 	fi
 
 	local DTC_COMPILER=${PACK_TOPDIR}/lichee/$PACK_KERN/scripts/dtc/dtc
 	local DTC_DEP_FILE=${PACK_TOPDIR}/lichee/$PACK_KERN/arch/$ARCH/boot/dts/.${PACK_CHIP}-${PACK_BOARD}.dtb.d.dtc.tmp
 	local DTC_SRC_PATH=${PACK_TOPDIR}/lichee/$PACK_KERN/arch/$ARCH/boot/dts/
-	local DTC_SRC_FILE=${PACK_TOPDIR}/lichee/$PACK_KERN/arch/$ARCH/boot/dts/.${PACK_CHIP}-${PACK_BOARD}.dtb.dts
+	local DTC_SRC_FILE=${PACK_TOPDIR}/lichee/$PACK_KERN/arch/$ARCH/boot/dts/.${PACK_CHIP}-${PACK_BOARD}.dtb.dts.tmp
 	local DTC_INI_FILE_BASE=${ROOT_DIR}/image/sys_config.fex
 	local DTC_INI_FILE=${ROOT_DIR}/image/sys_config_fix.fex
 	cp $DTC_INI_FILE_BASE $DTC_INI_FILE
@@ -434,7 +445,7 @@ function do_ini_to_dts()
 	if [ ! -f $DTC_DEP_FILE ]; then
 		printf "Script_to_dts: Can not find [%s-%s.dts]. Will use common dts file instead.\n" ${PACK_CHIP} ${PACK_BOARD}
 		DTC_DEP_FILE=${PACK_TOPDIR}/lichee/$PACK_KERN/arch/$ARCH/boot/dts/.${PACK_CHIP}-soc.dtb.d.dtc.tmp
-		DTC_SRC_FILE=${PACK_TOPDIR}/lichee/$PACK_KERN/arch/$ARCH/boot/dts/.${PACK_CHIP}-soc.dtb.dts
+		DTC_SRC_FILE=${PACK_TOPDIR}/lichee/$PACK_KERN/arch/$ARCH/boot/dts/.${PACK_CHIP}-soc.dtb.dts.tmp
 	fi
 	$DTC_COMPILER -O dtb -o ${ROOT_DIR}/image/sunxi.dtb	\
 		-b 0			\
@@ -446,18 +457,11 @@ function do_ini_to_dts()
 		exit 1
 	fi
 
-	#restore the orignal dtsi
-	if [ "x${ARCH}" = "xarm64" ]; then
-		if [ "x${PACK_PLATFORM}" = "xdragonboard" ]; then
-			local DTS_PATH=$(PACK_TOPDIR)/lichee/linux-3.10/arch/arm64/boot/dts/
-			if [ -f ${DTS_PATH}/sun50iw1p1_bak.dtsi ];then
-				rm -f ${DTS_PATH}/sun50iw1p1.dtsi
-				mv  ${DTS_PATH}/sun50iw1p1_bak.dtsi  ${DTS_PATH}/sun50iw1p1.dtsi
-			fi
-		fi
-	fi
-
 	printf "Conver script to dts ok.\n"
+
+	# It'is used for debug dtb
+	$DTC_COMPILER -I dtb -O dts -o ${ROOT_DIR}/image/.sunxi.dts ${ROOT_DIR}/image/sunxi.dtb
+
 	return
 }
 
@@ -465,11 +469,20 @@ function do_common()
 {
 	cd ${ROOT_DIR}/image
 
+	if [ ! -f board_config.fex ]; then
+		echo "[empty]" > board_config.fex
+	fi
+
 	busybox unix2dos sys_config.fex
-	busybox unix2dos sys_partition.fex
+	busybox unix2dos board_config.fex
 	script  sys_config.fex > /dev/null
-	script  sys_partition.fex > /dev/null
 	cp -f   sys_config.bin config.fex
+	script  board_config.fex > /dev/null
+	cp -f board_config.bin board.fex
+
+	busybox unix2dos sys_partition.fex
+	script  sys_partition.fex > /dev/null
+
 
 	if [ "x${PACK_PLATFORM}" = "xdragonboard" ] ; then
 		busybox dos2unix test_config.fex
@@ -484,14 +497,17 @@ function do_common()
 
 		if [ -f "sunxi.dtb" ]; then
 			cp sunxi.dtb sunxi.fex
-			update_uboot_fdt u-boot-spinor.fex sunxi.fex u-boot-spinor.fex >/dev/null
 		fi
 
 		# Here, will create sys_partition_nor.bin
 		busybox unix2dos sys_partition_nor.fex
 		script  sys_partition_nor.fex > /dev/null
 		update_boot0 boot0_spinor.fex   sys_config.bin SDMMC_CARD > /dev/null
-		update_uboot u-boot-spinor.fex  sys_config.bin >/dev/null
+		if [ "x${PACK_KERN}" = "xlinux-3.4" ] ; then
+			update_uboot -merge u-boot-spinor.fex  sys_config.bin > /dev/null
+		else
+			update_uboot -no_merge u-boot-spinor.fex  sys_config.bin > /dev/null
+		fi
 
 		if [ -f boot_package_nor.cfg ]; then
 			echo "pack boot package"
@@ -515,13 +531,21 @@ function do_common()
 
 	if [ -f "sunxi.dtb" ]; then
 		cp sunxi.dtb sunxi.fex
-		update_uboot_fdt u-boot.fex sunxi.fex u-boot.fex >/dev/null
+		update_dtb sunxi.fex 4096
 	fi
 
+	if [ -f "scp.fex" ]; then
+		echo "update scp"
+		update_scp scp.fex sunxi.fex >/dev/null
+	fi
 	# Those files for Nand or Card
 	update_boot0 boot0_nand.fex	sys_config.bin NAND > /dev/null
 	update_boot0 boot0_sdcard.fex	sys_config.bin SDMMC_CARD > /dev/null
-	update_uboot u-boot.fex         sys_config.bin > /dev/null
+	if [ "x${PACK_KERN}" = "xlinux-3.4" ] ; then
+		update_uboot -merge u-boot.fex sys_config.bin > /dev/null
+	else
+		update_uboot -no_merge u-boot.fex sys_config.bin > /dev/null
+	fi
 	update_fes1  fes1.fex           sys_config.bin > /dev/null
 	fsbuild	     boot-resource.ini  split_xxxx.fex > /dev/null
 
@@ -529,6 +553,12 @@ function do_common()
 			echo "pack boot package"
 			busybox unix2dos boot_package.cfg
 			dragonsecboot -pack boot_package.cfg
+
+		if [ $? -ne 0 ]
+		then
+			pack_error "dragon pack run error"
+			exit 1
+		fi
 	fi
 
 	if [ "x${PACK_FUNC}" = "xprvt" ] ; then
@@ -553,33 +583,59 @@ function do_finish()
 	# loathsome thing, we need to backup & copy files. Check whether
 	# sys_partition_nor.bin is exist, and create sunxi_mbr.fex for Nor.
 	if [ -f sys_partition_nor.bin ]; then
-		mv -f sys_partition.bin         sys_partition.bin_back
-		cp -f sys_partition_nor.bin     sys_partition.bin
-		update_mbr                      sys_partition.bin 1 > /dev/null
-		#when use devicetree, the size of uboot+dtb is larger then 256K
-		if [ -f boot_package_nor.cfg ]; then
-			BOOT1_FILE=boot_package_nor.fex
-		else
-			BOOT1_FILE=u-boot-spinor.fex
-		fi
-		LOGIC_START=496 #496+16=512K
-		merge_full_img --out full_img.fex \
-			--boot0 boot0_spinor.fex \
-			--boot1 ${BOOT1_FILE} \
-			--mbr sunxi_mbr.fex \
-			--logic_start ${LOGIC_START} \
-			--partition sys_partition.bin
+		update_mbr sys_partition_nor.bin 1 sunxi_mbr_nor.fex
 		if [ $? -ne 0 ]; then
-			pack_error "merge_full_img failed"
+			pack_error "update_mbr failed"
 			exit 1
 		fi
-		mv -f sys_partition.bin_back    sys_partition.bin
-	fi
-	if [ ! -f full_img.fex ]; then
-		echo "full_img.fex is empty" > full_img.fex
+		#only uboot2011&linux-3.4 bsp used full img
+		if [ "x${PACK_KERN}" = "xlinux-3.4" ] ; then
+			BOOT1_FILE=u-boot-spinor.fex
+			LOGIC_START=496 #496+16=512K
+			merge_full_img --out full_img.fex \
+				--boot0 boot0_spinor.fex \
+				--boot1 ${BOOT1_FILE} \
+				--mbr sunxi_mbr_nor.fex \
+				--logic_start ${LOGIC_START} \
+				--partition sys_partition_nor.bin
+			if [ $? -ne 0 ]; then
+				pack_error "merge_full_img failed"
+				exit 1
+			fi
+		else
+			mv sys_partition_nor.fex sys_partition.fex
+		fi
+
 	fi
 
-	update_mbr          sys_partition.bin 4 > /dev/null
+
+
+	if [ "x${PACK_KERN}" = "xlinux-3.4" ] ; then
+                if [ ! -f full_img.fex ]; then
+                        echo "full_img.fex is empty" > full_img.fex
+                fi
+		if [ ! -f sys_partition_nor.bin ]; then
+		        update_mbr sys_partition.bin 4
+		        if [ $? -ne 0 ]; then
+			        pack_error "update_mbr failed"
+			        exit 1
+                        fi
+                else
+		        update_mbr sys_partition.bin 1
+		        if [ $? -ne 0 ]; then
+			        pack_error "update_mbr failed"
+			        exit 1
+                        fi
+		fi
+	else
+		if [ ! -f sys_partition_nor.bin ]; then
+			update_mbr          sys_partition.bin 4
+			if [ $? -ne 0 ]; then
+				pack_error "update_mbr failed"
+				exit 1
+			fi
+		fi
+	fi
 	dragon image.cfg    sys_partition.fex
         if [ $? -eq 0 ]; then
 	    if [ -e ${IMG_NAME} ]; then
@@ -694,12 +750,12 @@ function do_pack_tina()
 	ln -s ${ROOT_DIR}/boot.img        boot.fex
 	ln -s ${ROOT_DIR}/rootfs.img     rootfs.fex
 	if [ -f ${ROOT_DIR}/boot_initramfs.img ]; then
-        ln -s ${ROOT_DIR}/boot_initramfs.img recovery.fex
-    else
-        touch recovery.fex
-        echo "recovery part not used!" > recovery.fex
-    fi
-    # Those files is ready for SPINor.
+		ln -s ${ROOT_DIR}/boot_initramfs.img recovery.fex
+	else
+		touch recovery.fex
+		echo "recovery part not used!" > recovery.fex
+	fi
+	# Those files is ready for SPINor.
 	#ln -s ${ROOT_DIR}/uImage          kernel.fex
 	#ln -s ${ROOT_DIR}/rootfs.squashfs rootfs_squashfs.fex
 
